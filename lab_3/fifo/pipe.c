@@ -2,81 +2,90 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <time.h>
-#include <limits.h>
 #include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <limits.h>
 
-#define PARENT_DELAY_SEC 5
+static void strip_nl(char *s)
+{
+    s[strcspn(s, "\n")] = '\0';
+}
 
-int main(void) {
-    int ipc_descriptor[2];
-    
-    if (pipe(ipc_descriptor) != 0) {
-        perror("Сбой при создании анонимного канала (pipe)");
+int main(void)
+{
+    int fd[2];
+
+    if (pipe(fd) == -1) {
+        perror("pipe");
         return EXIT_FAILURE;
     }
 
-    pid_t child_process_id = fork();
-
-    if (child_process_id < 0) {
-        perror("Сбой клонирования процесса (fork)");
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
         return EXIT_FAILURE;
     }
-    
-    if (child_process_id == 0) {
-        char rx_buffer[PIPE_BUF];
-        
-        close(ipc_descriptor[1]);
-        
-        ssize_t bytes_received = read(ipc_descriptor[0], rx_buffer, sizeof(rx_buffer) - 1);
-        if (bytes_received < 0) {
-            perror("Ошибка чтения данных из канала");
-            close(ipc_descriptor[0]);
+
+    if (pid == 0) {
+        /* child: reader */
+        close(fd[1]);
+
+        char buf[PIPE_BUF];
+        size_t total = 0;
+        ssize_t n;
+
+        while ((n = read(fd[0], buf + total, sizeof(buf) - 1 - total)) > 0) {
+            total += (size_t)n;
+            if (total >= sizeof(buf) - 1)
+                break;
+        }
+        if (n < 0) {
+            perror("read");
+            close(fd[0]);
             return EXIT_FAILURE;
         }
-        
-        rx_buffer[bytes_received] = '\0';
-        close(ipc_descriptor[0]);
+        buf[total] = '\0';
+        close(fd[0]);
 
-        time_t now = time(NULL);
-        printf("[CHILD]                                время: %s", ctime(&now));
-        printf("[from parent in pipe] %s", rx_buffer);
-        
+        time_t t = time(NULL);
+        char *ts = ctime(&t);
+        if (ts) strip_nl(ts);
+
+        printf("[child] local time : %s\n", ts ? ts : "?");
+        printf("[child] got       : %s\n", buf);
         return EXIT_SUCCESS;
-    } 
-    else {
-        pid_t current_pid = getpid();
-        time_t now = time(NULL);
-        char tx_buffer[PIPE_BUF];
-
-        int msg_len = snprintf(tx_buffer, sizeof(tx_buffer), "from pid: %d, time: %s", current_pid, ctime(&now));
-        if (msg_len < 0 || (size_t)msg_len >= sizeof(tx_buffer)) {
-            perror("Ошибка подготовки буфера сообщения");
-            return EXIT_FAILURE;
-        }
-
-        sleep(PARENT_DELAY_SEC);
-        
-        close(ipc_descriptor[0]);
-        
-        if (write(ipc_descriptor[1], tx_buffer, strlen(tx_buffer) + 1) < 0) {
-            perror("Ошибка записи данных в канал");
-            close(ipc_descriptor[1]);
-            return EXIT_FAILURE;
-        }
-        close(ipc_descriptor[1]);
-
-        int process_status;
-        if (waitpid(child_process_id, &process_status, 0) == child_process_id) {
-            if (WIFEXITED(process_status) && WEXITSTATUS(process_status) != 0) {
-                fprintf(stderr, "Дочерний процесс завершился с кодом ошибки\n");
-                return EXIT_FAILURE;
-            }
-        } else {
-            perror("Ошибка ожидания завершения дочернего процесса");
-            return EXIT_FAILURE;
-        }
     }
+
+    close(fd[0]);
+
+    time_t t = time(NULL);
+    char *ts = ctime(&t);
+    if (ts) strip_nl(ts);
+
+    char msg[PIPE_BUF];
+    int len = snprintf(msg, sizeof(msg), "pid=%d time=%s", (int)getpid(), ts ? ts : "?");
+    if (len < 0 || (size_t)len >= sizeof(msg)) {
+        fprintf(stderr, "message too long\n");
+        close(fd[1]);
+        return EXIT_FAILURE;
+    }
+
+    ssize_t w = write(fd[1], msg, (size_t)len + 1);
+    if (w < 0) {
+        perror("write");
+        close(fd[1]);
+        return EXIT_FAILURE;
+    }
+    close(fd[1]);
+
+    int st = 0;
+    if (waitpid(pid, &st, 0) == -1) {
+        perror("waitpid");
+        return EXIT_FAILURE;
+    }
+    if (WIFEXITED(st) && WEXITSTATUS(st) != 0)
+        return EXIT_FAILURE;
 
     return EXIT_SUCCESS;
 }

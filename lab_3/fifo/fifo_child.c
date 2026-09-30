@@ -2,37 +2,46 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <string.h>
 #include <time.h>
 #include <limits.h>
 
-#define IPC_CHANNEL_PATH "/tmp/my_fifo"
+#define FIFO_PATH "/tmp/my_fifo"
 
-int main(void) {
-    char rx_buffer[PIPE_BUF];
-    
-    fprintf(stdout, "[CHILD] Ожидание поступления данных через именованный канал...\n");
+int main(void)
+{
+    char buf[PIPE_BUF];
 
-    int file_desc = open(IPC_CHANNEL_PATH, O_RDONLY);
-    if (file_desc < 0) {
-        perror("Ошибка открытия FIFO для чтения");
+    fprintf(stderr, "[child] waiting for fifo...\n");
+
+    int fd = open(FIFO_PATH, O_RDONLY);
+    if (fd == -1) {
+        perror("open fifo");
         return EXIT_FAILURE;
     }
 
-    ssize_t received_bytes = read(file_desc, rx_buffer, sizeof(rx_buffer) - 1);
-    if (received_bytes < 0) {
-        perror("Сбой при чтении из FIFO");
-        close(file_desc);
+    size_t total = 0;
+    ssize_t n;
+    while ((n = read(fd, buf + total, sizeof(buf) - 1 - total)) > 0) {
+        total += (size_t)n;
+        if (total >= sizeof(buf) - 1)
+            break;
+    }
+    if (n < 0) {
+        perror("read");
+        close(fd);
+        unlink(FIFO_PATH);
         return EXIT_FAILURE;
     }
-    
-    rx_buffer[received_bytes] = '\0';
-    close(file_desc);
+    buf[total] = '\0';
+    close(fd);
+    unlink(FIFO_PATH);
 
-    time_t current_time = time(NULL);
-    printf("[CHILD] Текущее системное время: %s", ctime(&current_time));
-    printf("[CHILD] Получено от родителя: %s", rx_buffer);
+    time_t t = time(NULL);
+    char *ts = ctime(&t);
+    if (ts) ts[strcspn(ts, "\n")] = '\0';
 
-    unlink(IPC_CHANNEL_PATH);
-
+    printf("[child] local time : %s\n", ts ? ts : "?");
+    printf("[child] got       : %s\n", buf);
     return EXIT_SUCCESS;
 }
