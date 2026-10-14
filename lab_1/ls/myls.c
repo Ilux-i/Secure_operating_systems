@@ -73,12 +73,33 @@ void print_long_format(FileInfo *file) {
     else if (S_ISSOCK(file->statbuf.st_mode)) type = 's';
     else type = '-';
     
+    char uid_buf[16];
+    char gid_buf[16];
+    const char *uname;
+    const char *gname;
+
+    if (pwd != NULL) {
+        uname = pwd->pw_name;
+    } else {
+        snprintf(uid_buf, sizeof(uid_buf), "%u",
+                 (unsigned int)file->statbuf.st_uid);
+        uname = uid_buf;
+    }
+
+    if (grp != NULL) {
+        gname = grp->gr_name;
+    } else {
+        snprintf(gid_buf, sizeof(gid_buf), "%u",
+                 (unsigned int)file->statbuf.st_gid);
+        gname = gid_buf;
+    }
+    
     printf("%c", type);
     print_permissions(file->statbuf.st_mode);
     printf(" %3ld %s %s %8ld %s ",
            (long)file->statbuf.st_nlink,
-           pwd ? pwd->pw_name : "?",
-           grp ? grp->gr_name : "?",
+           uname,
+           gname,
            (long)file->statbuf.st_size,
            timebuf);
     
@@ -106,6 +127,7 @@ void list_directory(const char *dirname) {
     
     FileInfo files[1000];
     int file_count = 0;
+    long total_blocks = 0;
     
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -123,12 +145,18 @@ void list_directory(const char *dirname) {
             continue;
         }
         
+        total_blocks += files[file_count].statbuf.st_blocks;
+        
         file_count++;
     }
     
     closedir(dir);
     
     qsort(files, file_count, sizeof(FileInfo), compare_files);
+    
+    if (flag_long) {
+        printf("total %ld\n", total_blocks / 2);
+    }
     
     for (int i = 0; i < file_count; i++) {
         if (flag_long) {
@@ -138,7 +166,6 @@ void list_directory(const char *dirname) {
             printf("%s%s%s\n", color, files[i].name, COLOR_RESET);
         }
     }
-    
 }
 
 int main(int argc, char *argv[]) {
