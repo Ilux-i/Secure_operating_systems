@@ -47,6 +47,8 @@ int main(void)
     }
     close(fd);
 
+    unlink(FIFO_PATH); 
+
     printf("[parent] sent: %s\n", msg);
     return EXIT_SUCCESS;
 }
