@@ -28,13 +28,36 @@
 *.so.*
 *.dylib
 
-# Executables
+# Executables and binaries
 *.exe
 *.out
 *.app
+*.bin
+*.run
+*.bat
+*.com
+*.msi
+*.apk
+*.ipa
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.flatpak
+*.jar
+*.war
+*.class
+*.pyc
+*.pyo
+
+# Executables by architecture (no extension)
 *.i*86
 *.x86_64
-*.hex
+*.arm*
+*.aarch64
+*.mips*
+*.ppc*
+*.riscv*
 
 # Debug files
 *.dSYM/
