@@ -1,16 +1,17 @@
-#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <fcntl.h>
 #include <errno.h>
 #include <time.h>
 
 #include "shmem.h"
 
-static volatile sig_atomic_t stop_requested = 0;
+static volatile int stop_requested = 0;
 
 static void catch_signal(int signum)
 {
@@ -31,55 +32,49 @@ int main(void)
 {
     install_signal_handlers();
 
-    int shm_descriptor = shm_open(SHARED_MEM_PATH, O_CREAT | O_EXCL | O_RDWR, 0666);
-    if (shm_descriptor < 0) {
+    key_t key = shmem_get_key();
+    if (key == (key_t)-1) {
+        perror("ftok");
+        return EXIT_FAILURE;
+    }
+
+    int shm_id = shmget(key, SHARED_MEM_CAPACITY, IPC_CREAT | IPC_EXCL | 0666);
+    if (shm_id < 0) {
         if (errno == EEXIST) {
-            fprintf(stderr, "Область памяти уже существует: /dev/shm%s\n", SHARED_MEM_PATH);
+            fprintf(stderr, "Область памяти уже существует (key=%d)\n", (int)key);
             return EXIT_FAILURE;
         }
-        perror("Не удалось создать общую память (shm_open)");
+        perror("shmget");
         return EXIT_FAILURE;
     }
 
-    if (ftruncate(shm_descriptor, SHARED_MEM_CAPACITY) < 0) {
-        perror("Ошибка установки размера (ftruncate)");
-        close(shm_descriptor);
-        shm_unlink(SHARED_MEM_PATH);
+    char *ptr = shmat(shm_id, NULL, 0);
+    if (ptr == (char *)-1) {
+        perror("shmat");
+        shmctl(shm_id, IPC_RMID, NULL);
         return EXIT_FAILURE;
     }
 
-    char *mapped_ptr = mmap(NULL, SHARED_MEM_CAPACITY, PROT_WRITE, MAP_SHARED, shm_descriptor, 0);
-    close(shm_descriptor);
-
-    if (mapped_ptr == MAP_FAILED) {
-        perror("Ошибка отображения памяти (mmap)");
-        shm_unlink(SHARED_MEM_PATH);
-        return EXIT_FAILURE;
-    }
-
-    printf("Нажмите Ctrl+C для остановки записи в /dev/shm%s\n", SHARED_MEM_PATH);
+    printf("Нажмите Ctrl+C для остановки записи (shmid=%d)\n", shm_id);
 
     while (!stop_requested) {
-        snprintf(mapped_ptr, SHARED_MEM_CAPACITY, "[sender] pid: %d, time: %ld\n", getpid(), time(NULL));
+        snprintf(ptr, SHARED_MEM_CAPACITY,
+                 "[sender] pid: %d, time: %ld\n", getpid(), time(NULL));
         sleep(1);
     }
 
-    snprintf(mapped_ptr, SHARED_MEM_CAPACITY, HALT_MESSAGE);
+    snprintf(ptr, SHARED_MEM_CAPACITY, HALT_MESSAGE);
 
-    int cleanup_error = 0;
+    int rc = EXIT_SUCCESS;
 
-    if (munmap(mapped_ptr, SHARED_MEM_CAPACITY) < 0) {
-        perror("Ошибка снятия отображения (munmap)");
-        cleanup_error = 1;
+    if (shmdt(ptr) < 0) {
+        perror("shmdt");
+        rc = EXIT_FAILURE;
     }
-    if (shm_unlink(SHARED_MEM_PATH) < 0) {
-        perror("Ошибка удаления общей памяти (shm_unlink)");
-        cleanup_error = 1;
-    }
-
-    if (cleanup_error) {
-        return EXIT_FAILURE;
+    if (shmctl(shm_id, IPC_RMID, NULL) < 0) {
+        perror("shmctl(IPC_RMID)");
+        rc = EXIT_FAILURE;
     }
 
-    return EXIT_SUCCESS;
+    return rc;
 }

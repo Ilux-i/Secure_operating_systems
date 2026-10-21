@@ -8,7 +8,7 @@
 
 #define WORK_SECONDS 10
 
-static volatile stop_flag = 0;
+static volatile sig_atomic_t stop_flag = 0;
 
 static void on_exit_print(void)
 {

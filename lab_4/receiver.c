@@ -1,15 +1,16 @@
-#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <fcntl.h>
 #include <time.h>
 
 #include "shmem.h"
 
-static volatile sig_atomic_t stop_requested = 0;
+static volatile int stop_requested = 0;
 
 static void catch_signal(int signum)
 {
@@ -30,29 +31,33 @@ int main(void)
 {
     install_signal_handlers();
 
-    int shm_descriptor = shm_open(SHARED_MEM_PATH, O_RDWR, 0666);
-    if (shm_descriptor < 0) {
-        perror("Сначала запустите sender");
+    key_t key = shmem_get_key();
+    if (key == (key_t)-1) {
+        perror("ftok");
         return EXIT_FAILURE;
     }
 
-    char *mapped_region = mmap(NULL, SHARED_MEM_CAPACITY, PROT_READ, MAP_SHARED, shm_descriptor, 0);
-    close(shm_descriptor);
-
-    if (mapped_region == MAP_FAILED) {
-        perror("Ошибка отображения памяти (mmap)");
-        shm_unlink(SHARED_MEM_PATH);
+    int shm_id = shmget(key, SHARED_MEM_CAPACITY, 0);
+    if (shm_id < 0) {
+        perror("Сначала запустите sender (shmget)");
         return EXIT_FAILURE;
     }
 
-    while (!stop_requested && memcmp(mapped_region, HALT_MESSAGE, SHARED_MEM_CAPACITY) != 0) {
+    char *ptr = shmat(shm_id, NULL, SHM_RDONLY);
+    if (ptr == (char *)-1) {
+        perror("shmat");
+        return EXIT_FAILURE;
+    }
+
+    while (!stop_requested &&
+           strncmp(ptr, HALT_MESSAGE, strlen(HALT_MESSAGE)) != 0) {
         sleep(1);
         printf("[receiver] pid: %d, time: %ld\n", getpid(), time(NULL));
-        printf("%s\n", mapped_region);
+        printf("%s\n", ptr);
     }
 
-    if (munmap(mapped_region, SHARED_MEM_CAPACITY) < 0) {
-        perror("Ошибка снятия отображения (munmap)");
+    if (shmdt(ptr) < 0) {
+        perror("shmdt");
         return EXIT_FAILURE;
     }
 
