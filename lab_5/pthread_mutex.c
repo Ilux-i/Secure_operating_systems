@@ -42,7 +42,7 @@ static void *consumer(void *arg)
     int reader = (int)(intptr_t)arg;
     sleep(1);
 
-    for (;;) {
+    while(1) {
         pthread_mutex_lock(&g_lock);
         if (g_stop) {
             pthread_mutex_unlock(&g_lock);
